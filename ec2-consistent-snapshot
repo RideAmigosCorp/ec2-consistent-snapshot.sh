@@ -1,0 +1,127 @@
+#!/bin/bash
+
+# Consistent EBS snapshots
+# Currently ext4 and xfs filesystems are supported
+
+# Usage: ec2-consistent-snapshot --description='' --tags="SomeKey=Some-Value;OtherKey=OtherValue"
+
+# Core Dependencies (All found in Ubuntu 18.04 server base install):
+# * bash < v4
+# * sync
+# * findmnt
+# * curl
+# * perl
+
+# AWS Dependencies:
+# * aws must be installed and configured for authentication. EC2 Instance Roles are recommended.
+#   * On Ubuntu: sudo apt install python3-pip && pip3 install --upgrade awscli
+# * At least these IAM permissions: "ec2:CreateTags", "ec2:DescribeInstanceAttribute", "ec2:CreateSnapshot"
+
+# Not currently supported or implemented:
+# * NOT freezing the filesystem
+# * Flushing DBs, like MySQL
+# * Snapshotting only some volumes. Currently all volumes get a snapshot.
+# * verbose/debug/dry-run modes.
+# * --version and --help
+# * Checking all dependencies before starting.
+# * Seperating command flags with space instead of "="
+# * "-tag" as alternative to "--tags" for compatibility with Perl version.
+
+# We don't use "set -e" at the top because we don't want to exit if there's an error,
+# We want to make sure the file systems are in a unfrozen state. 
+# Instead, we use "trap" to make sure we unfreeze if there's an error or interruption.
+
+# Parse out --description and --tags
+description=""
+tags=""
+
+for i in "$@"
+do
+case $i in
+    --description=*) description="${i#*=}" ;;
+    --tags=*) tags="${i#*=}" ;;
+    *) ;;
+esac
+done
+
+if [[ -z $tags ]]; then
+  tags_spec=""
+else
+  # Input format is name=value;name2=value2
+  # Output format is {Key=name,Value=value},{Key=name2,Value=value2}
+  # The Perl translates the formats and removes a trailing comma
+  new_tags=$( echo $tags | perl -p -e 's/(.*?)=(.*?)(;|$)/{Key=\1,Value=\2},/g; s/,$//' )
+  tags_spec="ResourceType=snapshot,Tags=[$new_tags]"
+fi
+
+
+# Unfreeze file systems
+function unfreeze() {
+  for target in $(findmnt -nlo TARGET -t ext4,xfs); { fsfreeze -u $target; }
+}
+
+function warn_and_unfreeze() {
+  # If there was any problem, make sure to unfreeze the filesystems before quitting!
+  errorCode=$?
+  if [ $errorCode -ne 0 ]; then
+    unfreeze
+    echo -e "ec2-consistent-snapshot exited with an error: $snapshot_output\n$vol_output"
+    exit $errorCode
+  fi
+}
+
+# Make sure to unfreeze if we are done, but but also if there was an error or if we are interrupted
+trap warn_and_unfreeze SIGINT ERR
+
+# Sync data to disk
+sync
+
+{
+  # Find the volumes for the instance
+  instance=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+  # Get the Availability Zone, like "us-east-1b"
+  az=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+  # Trim off the last character of the AZ, so "us-east-1b" becomes "us-east-1"
+  region=${az::-1}
+
+  volumes=$(
+    aws ec2 describe-instance-attribute --instance-id $instance \
+                                        --attribute blockDeviceMapping \
+                                        --output text \
+                                        --query BlockDeviceMappings[*].Ebs.VolumeId \
+                                        --region $region
+  )
+
+
+  # Find the mounted EXT4 and XFS partitions and freeze them
+  for target in $(findmnt -nlo TARGET -t ext4,xfs); { fsfreeze -f $target; }
+
+  snapshot_output=""
+
+  # Create snapshots for the current instance
+  # Be sure you have an Role attached to the instance
+  #  and that the role has permission to make snapshots.
+  for volume in $(echo $volumes | tr " " "\n"); {
+    vol_output=$(
+      aws ec2 create-snapshot --volume-id $volume \
+                              --description "$description" \
+                              --region $region \
+                              --tag-specifications "$tags_spec" 2>&1
+    )
+    snapshot_output="$snapshot_output\n$vol_output";
+  }
+
+  unfreeze
+}
+
+exit 0;
+
+# References
+#
+# * Automate EC2 Snapshots https://aws.amazon.com/blogs/compute/automating-the-creation-of-consistent-amazon-ebs-snapshots-with-amazon-ec2-systems-manager-part-1/ 
+# * Tag Snapshots on Creation https://aws.amazon.com/blogs/compute/tag-amazon-ebs-snapshots-on-creation-and-implement-stronger-security-policies/
+# * EC2 Instance Roles https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
+# * Creating Tags: https://docs.aws.amazon.com/cli/latest/reference/ec2/create-tags.html
+# * Allowed Characters in Tags: https://docs.aws.amazon.com/en_us/AWSEC2/latest/UserGuide/Using_Tags.html#tag-restrictions
+
+# :vim:ft=sh
