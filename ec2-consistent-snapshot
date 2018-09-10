@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Consistent EBS snapshots
-# Currently ext4 and xfs filesystems are supported
+# Freezes all EXT4 and XFS filesystems before taking an EBS snapshot.
+# Root filesystem "/" is always excluded for safety to avoid a system hang.
 
 # Usage: ec2-consistent-snapshot --description='' --tags="SomeKey=Some-Value;OtherKey=OtherValue"
 
@@ -57,7 +58,11 @@ fi
 
 # Unfreeze file systems
 function unfreeze() {
-  for target in $(findmnt -nlo TARGET -t ext4,xfs); { fsfreeze -u $target; }
+  for target in $(findmnt -nlo TARGET -t ext4,xfs); {
+    if [[ "$target" != "/"  ]]; then
+      fsfreeze --unfreeze "$target";
+    fi
+  }
 }
 
 function warn_and_unfreeze() {
@@ -94,7 +99,12 @@ sync
 
 
   # Find the mounted EXT4 and XFS partitions and freeze them
-  for target in $(findmnt -nlo TARGET -t ext4,xfs); { fsfreeze -f $target; }
+  # To avoid hanging the machine in unrecoverable way, don't freeze "/".
+  for target in $(findmnt -nlo TARGET -t ext4,xfs); {
+    if [[ "$target" != "/"  ]]; then
+      fsfreeze --freeze "$target";
+    fi
+  }
 
   snapshot_output=""
 
