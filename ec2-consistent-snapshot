@@ -2,21 +2,8 @@
 
 # Consistent EBS snapshots
 # Freezes all EXT4 and XFS filesystems before taking an EBS snapshot.
-# Root filesystem "/" is always excluded for safety to avoid a system hang.
 
 # Usage: ec2-consistent-snapshot --description='' --tags="SomeKey=Some-Value;OtherKey=OtherValue"
-
-# Core Dependencies (All found in Ubuntu 18.04 server base install):
-# * bash < v4
-# * sync
-# * findmnt
-# * curl
-# * perl
-
-# AWS Dependencies:
-# * aws must be installed and configured for authentication. EC2 Instance Roles are recommended.
-#   * On Ubuntu: sudo apt install python3-pip && pip3 install --upgrade awscli
-# * At least these IAM permissions: "ec2:CreateTags", "ec2:DescribeInstanceAttribute", "ec2:CreateSnapshot"
 
 # Not currently supported or implemented:
 # * NOT freezing the filesystem
