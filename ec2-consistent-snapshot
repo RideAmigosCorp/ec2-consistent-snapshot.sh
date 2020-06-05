@@ -45,7 +45,7 @@ fi
 
 # Unfreeze file systems
 function unfreeze() {
-  for target in $(findmnt -nlo TARGET -t ext4,xfs); {
+  for target in $(findmnt -nlo UUID,TARGET -t ext4,xfs  | awk '!a[$1]++ { print $2 }'); {
     if [[ "$target" != "/"  ]]; then
       fsfreeze --unfreeze "$target";
     fi
@@ -87,7 +87,7 @@ sync
 
   # Find the mounted EXT4 and XFS partitions and freeze them
   # To avoid hanging the machine in unrecoverable way, don't freeze "/".
-  for target in $(findmnt -nlo TARGET -t ext4,xfs); {
+  for target in $(findmnt -nlo UUID,TARGET -t ext4,xfs  | awk '!a[$1]++ { print $2 }'); {
     if [[ "$target" != "/"  ]]; then
       fsfreeze --freeze "$target";
     fi
