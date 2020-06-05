@@ -65,9 +65,6 @@ function warn_and_unfreeze() {
 # Make sure to unfreeze if we are done, but but also if there was an error or if we are interrupted
 trap warn_and_unfreeze SIGINT ERR
 
-# Sync data to disk
-sync
-
 {
   # Find the volumes for the instance
   instance=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
@@ -90,6 +87,8 @@ sync
   for target in $(findmnt -nlo TARGET -t ext4,xfs); {
     if [[ "$target" != "/"  ]]; then
       fsfreeze --freeze "$target";
+    else
+      sync -f "$target"
     fi
   }
 
